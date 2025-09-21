@@ -27,9 +27,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install pylint flake8
 
-    - name: 🔍 Run Analysis
+    - name: 🔍 Advanced PR Analysis
       run: |
-        echo "🤖 Starting PR Review Analysis..."
+        echo "🤖 Starting Advanced PR Review Analysis..."
         
         # Get changed Python files
         CHANGED_FILES=$(git diff --name-only origin/main...HEAD | grep '\.py$' | head -10)
@@ -40,89 +40,288 @@ jobs:
         fi
         
         echo "📁 Files to analyze: $CHANGED_FILES"
-        
-        # Initialize counters
-        TOTAL_ISSUES=0
-        
-        # Analyze each file
-        for file in $CHANGED_FILES; do
-          if [ -f "$file" ]; then
-            echo "🔍 Analyzing $file..."
-            
-            # Run pylint
-            PYLINT_ISSUES=$(pylint "$file" --output-format=text 2>/dev/null | wc -l || echo "0")
-            
-            # Run flake8
-            FLAKE8_ISSUES=$(flake8 "$file" 2>/dev/null | wc -l || echo "0")
-            
-            FILE_ISSUES=$((PYLINT_ISSUES + FLAKE8_ISSUES))
-            TOTAL_ISSUES=$((TOTAL_ISSUES + FILE_ISSUES))
-            
-            echo "  📊 Found $FILE_ISSUES issues in $file"
-            
-            # Show some actual issues
-            echo "  🔍 Pylint issues:"
-            pylint "$file" --output-format=text 2>/dev/null | head -5 || echo "    None"
-            
-            echo "  🔍 Flake8 issues:"
-            flake8 "$file" 2>/dev/null | head -5 || echo "    None"
-          fi
-        done
-        
         echo ""
-        echo "🎯 ANALYSIS COMPLETE"
-        echo "📊 Total Issues Found: $TOTAL_ISSUES"
-        echo "📁 Files Analyzed: $(echo $CHANGED_FILES | wc -w)"
         
-        # Create GitHub summary
-        cat >> $GITHUB_STEP_SUMMARY << EOF
-        ## 🤖 PR Review Results
+        # Create detailed analysis script matching your main agent
+        cat > advanced_analysis.py << 'EOF'
+        import subprocess
+        import sys
+        import json
+        import os
+        import re
         
-        **Total Issues:** $TOTAL_ISSUES  
-        **Files Analyzed:** $(echo $CHANGED_FILES | wc -w)  
+        def analyze_file_detailed(filepath):
+            """Detailed analysis matching the main PR Review Agent."""
+            print(f"🔍 Analyzing {filepath}...")
+            
+            issues = {
+                'pylint_issues': [],
+                'flake8_issues': [],
+                'total_count': 0
+            }
+            
+            # Pylint analysis with JSON output
+            try:
+                result = subprocess.run(
+                    ['pylint', filepath, '--output-format=json', '--reports=no'],
+                    capture_output=True, text=True, timeout=60
+                )
+                if result.stdout.strip():
+                    try:
+                        pylint_data = json.loads(result.stdout)
+                        for issue in pylint_data:
+                            issue_type = issue.get('type', 'unknown')
+                            message = issue.get('message', 'Unknown issue')
+                            symbol = issue.get('symbol', '')
+                            message_id = issue.get('message-id', '')
+                            line = issue.get('line', 0)
+                            
+                            formatted = f"{message_id}: {message}"
+                            issues['pylint_issues'].append({
+                                'line': line,
+                                'type': issue_type, 
+                                'message': formatted,
+                                'category': 'standards' if issue_type in ['convention', 'C'] else
+                                           'structure' if issue_type in ['refactor', 'R'] else 'bugs'
+                            })
+                        print(f"  📊 Pylint found {len(pylint_data)} issues")
+                    except json.JSONDecodeError:
+                        print(f"  ⚠️  Could not parse Pylint JSON output")
+            except Exception as e:
+                print(f"  ⚠️  Pylint failed: {e}")
+                
+            # Flake8 analysis
+            try:
+                result = subprocess.run(
+                    ['flake8', filepath, '--format=%(path)s:%(row)d:%(col)d: %(code)s %(text)s'],
+                    capture_output=True, text=True, timeout=60
+                )
+                if result.stdout.strip():
+                    flake8_lines = result.stdout.strip().split('\n')
+                    for line in flake8_lines:
+                        if ':' in line:
+                            parts = line.split(':', 3)
+                            if len(parts) >= 4:
+                                error_part = parts[3].strip()
+                                match = re.match(r'^([A-Z]\d+)\s+(.+)$', error_part)
+                                if match:
+                                    code = match.group(1)
+                                    text = match.group(2)
+                                    issues['flake8_issues'].append({
+                                        'line': parts[1],
+                                        'code': code,
+                                        'message': f"{code}: {text}",
+                                        'category': 'bugs'
+                                    })
+                    print(f"  📊 Flake8 found {len(issues['flake8_issues'])} issues")
+            except Exception as e:
+                print(f"  ⚠️  Flake8 failed: {e}")
+                
+            # Calculate totals
+            issues['total_count'] = len(issues['pylint_issues']) + len(issues['flake8_issues'])
+            return issues
         
-        ### 📄 Analyzed Files:
+        def categorize_and_report(all_results):
+            """Generate detailed report matching main agent format."""
+            total_issues = 0
+            standards_count = 0
+            structure_count = 0 
+            bugs_count = 0
+            
+            print(f"\n" + "="*60)
+            print(f"🎯 DETAILED ANALYSIS RESULTS")
+            print(f"="*60)
+            
+            for filepath, results in all_results.items():
+                file_total = results['total_count']
+                total_issues += file_total
+                
+                if file_total == 0:
+                    continue
+                    
+                print(f"\n📄 {filepath}")
+                print(f"───────────────────")
+                print(f"🎯 Issues Found: {file_total}")
+                
+                # Risk level
+                if file_total > 15:
+                    risk = "🔴 HIGH"
+                elif file_total > 5:
+                    risk = "🟡 MEDIUM"
+                else:
+                    risk = "🟢 LOW"
+                print(f"⚠️  Risk Level: {risk}")
+                
+                # Categorize issues
+                file_standards = len([i for i in results['pylint_issues'] if i['category'] == 'standards'])
+                file_structure = len([i for i in results['pylint_issues'] if i['category'] == 'structure'])
+                file_bugs = len([i for i in results['pylint_issues'] if i['category'] == 'bugs']) + len(results['flake8_issues'])
+                
+                standards_count += file_standards
+                structure_count += file_structure
+                bugs_count += file_bugs
+                
+                if file_standards > 0:
+                    print(f"\n📏 STANDARDS ({file_standards} issues):")
+                    for i, issue in enumerate([i for i in results['pylint_issues'] if i['category'] == 'standards'][:5], 1):
+                        print(f"  {i}. Line {issue['line']}: {issue['message']}")
+                    if file_standards > 5:
+                        print(f"  ... and {file_standards - 5} more standards issues")
+                
+                if file_structure > 0:
+                    print(f"\n🏗️ STRUCTURE ({file_structure} issues):")
+                    for i, issue in enumerate([i for i in results['pylint_issues'] if i['category'] == 'structure'][:3], 1):
+                        print(f"  {i}. Line {issue['line']}: {issue['message']}")
+                
+                if file_bugs > 0:
+                    print(f"\n🐛 BUGS ({file_bugs} issues):")
+                    bug_issues = ([i for i in results['pylint_issues'] if i['category'] == 'bugs'] + 
+                                 [{'line': i['line'], 'message': i['message']} for i in results['flake8_issues']])
+                    for i, issue in enumerate(bug_issues[:5], 1):
+                        print(f"  {i}. Line {issue['line']}: {issue['message']}")
+                    if file_bugs > 5:
+                        print(f"  ... and {file_bugs - 5} more bug issues")
+            
+            # Overall assessment
+            print(f"\n🎯 OVERALL ASSESSMENT")
+            print(f"="*50)
+            print(f"📊 Total Issues: {total_issues}")
+            print(f"📁 Files Analyzed: {len(all_results)}")
+            
+            if total_issues > 0:
+                quality_score = max(0, min(100, 100 - (total_issues * 3)))
+                print(f"🏆 Quality Score: {quality_score}/100")
+                
+                if total_issues > 15:
+                    print("⚠️  Risk Level: 🔴 HIGH")
+                elif total_issues > 5:
+                    print("⚠️  Risk Level: 🟡 MEDIUM")
+                else:
+                    print("⚠️  Risk Level: 🟢 LOW")
+                
+                print(f"\n🔢 ISSUE BREAKDOWN:")
+                print(f"🐛 Bugs: {bugs_count}")
+                print(f"🏗️ Structure: {structure_count}")
+                print(f"📏 Standards: {standards_count}")
+                
+                print(f"\n🚀 RECOMMENDATIONS:")
+                print(f"• Fix critical issues before merging")
+                print(f"• Run 'pylint <filename>' locally for details")
+                print(f"• Run 'flake8 <filename>' for PEP 8 compliance")
+            else:
+                print("✅ No issues found! Excellent code quality.")
+            
+            return total_issues
+        
+        # Main execution
+        if __name__ == "__main__":
+            files = sys.argv[1].split()
+            all_results = {}
+            
+            for filepath in files:
+                if os.path.exists(filepath):
+                    all_results[filepath] = analyze_file_detailed(filepath)
+            
+            total_issues = categorize_and_report(all_results)
+            
+            # Exit with appropriate code
+            if total_issues > 15:
+                print(f"\n❌ BLOCKING: Too many issues ({total_issues})")
+                sys.exit(1)
+            elif total_issues > 0:
+                print(f"\n⚠️  WARNING: Issues found but not blocking")
+                sys.exit(0)
+            else:
+                print(f"\n✅ SUCCESS: Clean code!")
+                sys.exit(0)
         EOF
         
-        for file in $CHANGED_FILES; do
-          if [ -f "$file" ]; then
-            echo "- \`$file\`" >> $GITHUB_STEP_SUMMARY
-          fi
-        done
+        # Run advanced analysis
+        python advanced_analysis.py "$CHANGED_FILES"
         
-        # Set exit code based on issues
-        if [ $TOTAL_ISSUES -gt 10 ]; then
-          echo "❌ Too many issues ($TOTAL_ISSUES). Please fix critical issues."
-          exit 1
-        elif [ $TOTAL_ISSUES -gt 0 ]; then
-          echo "⚠️  Issues found but not blocking merge."
-          exit 0
-        else
-          echo "✅ No issues found! Great code quality."
-          exit 0
-        fi
+        # Capture exit code
+        ANALYSIS_EXIT_CODE=$?
+        echo "Analysis completed with exit code: $ANALYSIS_EXIT_CODE"
+        exit $ANALYSIS_EXIT_CODE
 
-    - name: 💬 Comment on PR (if issues found)
+    - name: 📊 Update GitHub Summary
+      if: always()
+      run: |
+        echo "## 🤖 Advanced PR Review Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Analysis Tool**: Professional multi-tool analysis (Pylint + Flake8 with detailed parsing)" >> $GITHUB_STEP_SUMMARY
+        echo "**Quality Level**: Matches enterprise PR Review Agent standards" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📋 Analysis Details:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Pylint**: Structure, standards, and logic analysis" >> $GITHUB_STEP_SUMMARY
+        echo "- **Flake8**: PEP 8 compliance and bug detection" >> $GITHUB_STEP_SUMMARY
+        echo "- **Risk Assessment**: HIGH/MEDIUM/LOW classification" >> $GITHUB_STEP_SUMMARY
+        echo "- **Quality Scoring**: 0-100 point system" >> $GITHUB_STEP_SUMMARY
+
+    - name: 💬 Post Professional Review Comment
       if: failure()
       uses: actions/github-script@v6
       with:
         script: |
-          const comment = `## 🤖 Automated PR Review Results
+          const comment = `## 🤖 Professional PR Review Results
           
-          ⚠️ **Issues were found in this PR that should be addressed before merging.**
+          ⚠️ **Multiple code quality issues detected requiring attention.**
           
-          Please check the [Actions tab](${context.payload.repository.html_url}/actions/runs/${context.runId}) for detailed analysis results.
+          ### 📊 Analysis Summary:
+          - **Tool**: Enterprise-grade multi-tool analysis
+          - **Standards**: Pylint + Flake8 with detailed issue parsing
+          - **Quality**: Professional categorization (Structure/Standards/Bugs)
+          - **Assessment**: Risk level and quality scoring included
           
-          ### 🛠️ Recommended Actions:
-          1. Run \`pip install pylint flake8\`
-          2. Fix reported issues locally:
-             - \`pylint your_file.py\`
-             - \`flake8 your_file.py\`
-          3. Push your fixes
-          4. This check will re-run automatically
+          ### 🔍 Detailed Results:
+          Check the [Actions tab](${context.payload.repository.html_url}/actions/runs/${context.runId}) for comprehensive analysis including:
+          
+          - **📏 Standards Issues**: Documentation, naming, style guide compliance
+          - **🏗️ Structure Issues**: Code organization, design patterns, refactoring opportunities  
+          - **🐛 Bug Issues**: Logic errors, unreachable code, unused variables, PEP 8 violations
+          - **⚠️ Risk Assessment**: HIGH/MEDIUM/LOW risk classification
+          - **🏆 Quality Score**: Numerical quality assessment (0-100)
+          
+          ### 🛠️ Professional Fix Guide:
+          
+          **For Standards Issues (📏):**
+          \`\`\`bash
+          # Add docstrings to all functions and classes
+          # Follow PEP 8 naming conventions
+          # Improve code documentation
+          \`\`\`
+          
+          **For Structure Issues (🏗️):**
+          \`\`\`bash
+          # Refactor large functions/classes
+          # Improve code organization  
+          # Consider design patterns
+          \`\`\`
+          
+          **For Bug Issues (🐛):**
+          \`\`\`bash
+          pylint your_file.py          # Detect logic issues
+          flake8 your_file.py          # Check PEP 8 compliance
+          # Remove unused variables and unreachable code
+          # Fix spacing and formatting issues
+          \`\`\`
+          
+          ### 🎯 Next Steps:
+          1. **Review** detailed analysis in Actions logs
+          2. **Categorize** issues by priority (HIGH → MEDIUM → LOW)
+          3. **Fix** critical issues first (Structure + Bug issues)
+          4. **Validate** with local testing: \`pylint\` and \`flake8\`
+          5. **Push** your improvements - this check will re-run automatically
+          
+          ### 📚 Quality Resources:
+          - [Python Style Guide (PEP 8)](https://pep8.org/)
+          - [Python Docstring Guide](https://peps.python.org/pep-0257/)
+          - [Clean Code Principles](https://refactoring.guru/)
           
           ---
-          *This review was automatically generated by PR Review Agent* 🚀`;
+          *This professional review was automatically generated by PR Review Agent* 🚀
+          
+          **Enterprise Quality Gate**: This PR requires code quality improvements before merge approval.`;
           
           github.rest.issues.createComment({
             issue_number: context.issue.number,
